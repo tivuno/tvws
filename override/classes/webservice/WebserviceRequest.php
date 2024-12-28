@@ -212,4 +212,67 @@ class WebserviceRequest extends WebserviceRequestCore
     {
         return str_replace('\\', '', get_class($object));
     }
+
+    public function executeEntityDelete(): void
+    {
+        $objects = [];
+        $arr_avoid_id = [];
+        $ids = [];
+        if (isset($this->urlFragments['id'])) {
+            preg_match('#^\[(.*)\]$#Ui', $this->urlFragments['id'], $matches);
+            if (count($matches) > 1) {
+                $ids = explode(',', $matches[1]);
+            }
+        } else {
+            $ids[] = (int) $this->urlSegment[1];
+        }
+        if (!empty($ids)) {
+            foreach ($ids as $id) {
+                $object = new $this->resourceConfiguration['retrieveData']['className']((int) $id);
+                if (!$object->id) {
+                    $arr_avoid_id[] = $id;
+                } else {
+                    $objects[] = $object;
+                }
+            }
+        }
+
+        $postponeNTreeRegeneration = false;
+
+        if (!empty($arr_avoid_id) || empty($ids)) {
+            $this->setError(404, 'Id(s) not exists: ' . implode(', ', $arr_avoid_id), 87);
+            $this->_outputEnabled = true;
+        } else {
+            foreach ($objects as $object) {
+                if ($object instanceof Category) {
+                    $object->doNotRegenerateNTree = true;
+                    $postponeNTreeRegeneration = true;
+                }
+
+                /* @var ObjectModel $object */
+                $hook_name = 'actionObject' . self::getFullyQualifiedName($object) . 'Delete';
+                Hook::exec($hook_name . 'Before', ['object' => $object]);
+                if (isset($this->resourceConfiguration['objectMethods']['delete'])) {
+                    $result = $object->{$this->resourceConfiguration['objectMethods']['delete']}();
+                } else {
+                    $result = $object->delete();
+                }
+                Hook::exec($hook_name . 'After', ['object' => $object]);
+
+                if (!$result) {
+                    $arr_avoid_id[] = $object->id;
+                }
+            }
+            if (!empty($arr_avoid_id)) {
+                $this->setError(500, 'Id(s) wasn\'t deleted: ' . implode(', ', $arr_avoid_id), 88);
+                $this->_outputEnabled = true;
+            } else {
+                $this->_outputEnabled = false;
+            }
+        }
+
+        if ($postponeNTreeRegeneration) {
+            Category::regenerateEntireNtree();
+        }
+    }
 }
